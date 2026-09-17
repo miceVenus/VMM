@@ -1,9 +1,10 @@
-#include "guest_console.h"
-#include "virtio_net.h"
+#include "guest/guest_console.h"
+#include "guest/virtio_net.h"
 #include <stddef.h>
 
 static void __attribute__((noreturn)) halt_forever(void) {
-    for (;;) asm("hlt");
+    asm volatile("cli" ::: "memory");
+    for (;;) asm volatile("hlt");
 }
 
 void
@@ -38,7 +39,7 @@ _start(void) {
         halt_forever();
     }
 
-    for (int attempt = 0; attempt < 500000; ++attempt) {
+    for (;;) {
         const int received = net_udp_receive(NULL, NULL, reply, sizeof(reply) - 1);
         if (received >= 0) {
             reply[received] = '\0';
@@ -47,8 +48,7 @@ _start(void) {
             puts("\n");
             halt_forever();
         }
-    }
 
-    puts("No UDP echo received; network transmit path is complete\n");
-    halt_forever();
+        net_wait();
+    }
 }

@@ -1,14 +1,31 @@
-#include "vcpu.hpp"
+#include "host/vcpu.hpp"
 
-#include "log.hpp"
-#include "virtio_net.hpp"
+#include "host/log.hpp"
+#include "host/virtio_net.hpp"
 
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 
 #include <cstdio>
+#include <mutex>
 
 int vm_id;
+
+namespace {
+
+bool guest_interrupts_enabled(const vm& v) {
+    struct kvm_regs regs{};
+    if (ioctl(v.vcpu_fd, KVM_GET_REGS, &regs) < 0) return false;
+    return (regs.rflags & (UINT64_C(1) << 9)) != 0;
+}
+
+void wait_for_guest_interrupt(vm& v) {
+    std::unique_lock<std::mutex> lock(v.interrupt_mutex);
+    v.interrupt_cv.wait(lock, [&v] { return v.interrupt_wakeup; });
+    v.interrupt_wakeup = false;
+}
+
+} // namespace
 
 int run_vcpu(struct vm &v) {
     char vm_src[32];
@@ -66,7 +83,7 @@ int run_vcpu(struct vm &v) {
             break;
 
         case KVM_EXIT_MMIO:
-            if (v.net && virtio_net_handle_mmio(v, *run)) {
+            if (v.net && v.net->handle_mmio(*run)) {
                 break;
             }
 
@@ -79,6 +96,10 @@ int run_vcpu(struct vm &v) {
             break;
 
         case KVM_EXIT_HLT:
+            if (v.net && guest_interrupts_enabled(v)) {
+                wait_for_guest_interrupt(v);
+                break;
+            }
             stop = true;
             break;
 

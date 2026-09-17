@@ -1,18 +1,20 @@
 #include <sys/wait.h>
 
-#include "vcpu.hpp"
-#include "cli.hpp"
-#include "kvm.hpp"
-#include "virtio_net.hpp"
-#include "log.hpp"
+#include "host/vcpu.hpp"
+#include "host/cli.hpp"
+#include "host/kvm.hpp"
+#include "host/virtio_net.hpp"
+#include "host/log.hpp"
 
 #include <cstdio>
+#include <memory>
+#include <new>
 
 int child_main(args_t& myArgs) {
     int status = 0;
     char src[32];
     vm v{};
-    bool network_started = false;
+    std::unique_ptr<virtio_net> network_device;
 
     sprintf(src, "[VM-%d]", vm_id);
 
@@ -61,16 +63,15 @@ int child_main(args_t& myArgs) {
     if (status != 0) goto cleanup;
 
     if (myArgs.network) {
-        status = virtio_net_init(v, vm_id);
-        if (status != 0) {
+        network_device.reset(new (std::nothrow) virtio_net(v, vm_id));
+        if (network_device == nullptr || !network_device->initialize()) {
             LOG(src, "Couldn't create the Virtio-net TAP device.", RED_PREFIX);
             status = 0x60;
             goto cleanup;
         }
-        network_started = true;
-
         char message[80];
-        sprintf(message, "Virtio-net attached to %s.", v.net->tap_name.c_str());
+        sprintf(message, "Virtio-net attached to %s.",
+                network_device->tap_name().c_str());
         LOG(src, message, GREEN_PREFIX);
     }
 
@@ -84,7 +85,8 @@ int child_main(args_t& myArgs) {
     }
 
 cleanup:
-    if (network_started) virtio_net_destroy(v);
+    network_device.reset();
+    v.net = nullptr;
     vm_destroy(v);
     return status;
 }

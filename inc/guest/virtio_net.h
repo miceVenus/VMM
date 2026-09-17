@@ -2,14 +2,13 @@
 
 #include <stdint.h>
 
-#include "virtio_mmio.h"
-
 #ifdef GUEST_BUILD
 
 /*
- * The guest driver is deliberately small: it provides Ethernet, ARP, IPv4
- * and UDP, but no TCP, DNS, or TLS.  IP addresses are represented in the
- * human-readable order used by NET_IPV4(a, b, c, d).
+ * Guest-side network API. The implementation is split between a small
+ * Virtio-net transport and a minimal Ethernet/ARP/IPv4/UDP protocol stack.
+ * IP addresses are represented in the human-readable order used by
+ * NET_IPV4(a, b, c, d).
  */
 
 #define NET_OK             0
@@ -51,5 +50,7 @@ int net_udp_receive(uint32_t* source_ip,
 /* Useful for demos that only need to service ARP/TAP traffic. */
 void net_poll(void);
 
-#endif
+/* Sleeps until the Virtio device raises the Guest interrupt. */
+void net_wait(void);
 
+#endif

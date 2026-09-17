@@ -6,10 +6,11 @@ allows a freestanding 64-bit Guest to exchange UDP packets with the Host and,
 with NAT configured, the outside network.
 
 The VMM creates one vCPU per VM, enters 64-bit long mode with 2 MiB paging,
-loads a flat Guest image, and handles the two exits used by the demo:
+loads a flat Guest image, and handles the exits used by the demo:
 
 * `KVM_EXIT_IO` for Guest console output;
-* `KVM_EXIT_MMIO` for Virtio-MMIO register accesses.
+* `KVM_EXIT_MMIO` for Virtio-MMIO register accesses;
+* `KVM_EXIT_HLT` for interruptible Guest waits and final shutdown.
 
 The project intentionally does not include a Guest filesystem, file-sharing
 syscalls, interactive console input, or multi-vCPU execution. These mechanisms
@@ -18,7 +19,9 @@ are outside the network-device demonstration.
 ## Architecture
 
 ```text
-Guest UDP/IP stack
+Guest application
+        ↓
+Guest network_stack.c
         ↓
 Guest Virtio-net driver
         ↓  Virtio-MMIO + KVM_EXIT_MMIO
@@ -31,9 +34,13 @@ Host routing/NAT
 Outside network
 ```
 
-The Guest network library implements Ethernet, ARP, IPv4, and UDP. It uses
-polling because the minimal Guest does not install an IDT or an interrupt
-handler. TCP, DHCP, DNS, TLS, offloads, and multiqueue are outside this demo.
+The Guest network stack implements Ethernet, ARP, IPv4, and UDP. The separate
+Virtio-net Guest driver owns Virtio-MMIO, Virtqueues, the Guest GDT/IDT, and
+frame buffers. It waits for network activity with `sti; hlt`.
+After the VMM completes a Virtio RX/TX buffer, it injects interrupt vector 32
+with `KVM_INTERRUPT`; the Guest ISR records the event and the main loop drains
+the virtqueue. A full PIC/APIC/IOAPIC model is outside this demo. TCP, DHCP,
+DNS, TLS, offloads, and multiqueue are also outside its scope.
 
 ## Usage
 
@@ -98,6 +105,8 @@ The VMM removes its TAP interface when it exits. The MMIO register layout
 follows the [Virtio 1.2 specification](https://docs.oasis-open.org/virtio/virtio/v1.2/virtio-v1.2.html),
 and TAP provides userspace Ethernet frames as described in the
 [Linux TUN/TAP documentation](https://docs.kernel.org/networking/tuntap.html).
+The interrupt injection interface is documented in the
+[KVM API](https://docs.kernel.org/virt/kvm/api.html).
 
 ## Prerequisites
 
@@ -119,11 +128,20 @@ sudo modprobe kvm_intel   # or kvm_amd
 ## Project layout
 
 ```text
-src/kvm.cpp             KVM VM, vCPU, long-mode, and Guest image setup
-src/vcpu.cpp            KVM_RUN loop and exit dispatch
-src/virtio_net.cpp      Virtio-net device model and TAP backend
-src/virtio_net_guest.c  Freestanding Guest Ethernet/ARP/IPv4/UDP driver
-src/guest_console.c     Minimal Guest-to-Host console output
+src/host/                Host VMM and Virtio-net device model
+src/host/kvm.cpp         KVM VM, vCPU, long-mode, and Guest image setup
+src/host/vcpu.cpp        KVM_RUN loop and exit dispatch
+src/host/virtio_net.cpp  Virtio-net device model and interrupts
+src/host/virtqueue.cpp   Host split Virtqueue implementation
+src/host/tap_device.cpp  Linux TAP interface wrapper
+src/guest/               Freestanding Guest code
+src/guest/network_stack.c  Guest Ethernet/ARP/IPv4/UDP stack
+src/guest/virtio_net_driver.c  Guest Virtio-MMIO/frame transport
+src/guest/virtio_net_guest_irq.S  Guest interrupt entry point
+src/guest/guest_console.c  Minimal Guest-to-Host console output
+inc/host/                Host-only interfaces
+inc/guest/               Guest-only interfaces
+inc/virtio_mmio.h        Shared Virtio-MMIO definitions
 test/testN1/            Virtio-net demonstration Guest
 scripts/                TAP routing and NAT helpers
 ```

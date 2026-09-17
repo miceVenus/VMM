@@ -15,6 +15,9 @@
 #define VIRTIO_MMIO_DEVICE_NET  UINT32_C(1)
 #define VIRTIO_MMIO_VENDOR_ID   UINT32_C(0x554d4554) /* "UMET" */
 
+/* The minimal VMM injects this vector directly with KVM_INTERRUPT. */
+#define VIRTIO_NET_INTERRUPT_VECTOR UINT32_C(32)
+
 /* Virtio MMIO common registers. */
 #define VIRTIO_MMIO_REG_MAGIC_VALUE      UINT32_C(0x000)
 #define VIRTIO_MMIO_REG_VERSION          UINT32_C(0x004)
@@ -55,4 +58,3 @@
 /* Virtqueue descriptor flags. */
 #define VIRTQ_DESC_F_NEXT  UINT16_C(1)
 #define VIRTQ_DESC_F_WRITE UINT16_C(2)
-
