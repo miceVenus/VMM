@@ -3,18 +3,31 @@
 #include "guest/guest_memory.h"
 #include "guest/virtio_net_driver.h"
 
+
+/* Maximum Ethernet-frame size supplied by the lower-level Virtio driver;
+ * the 10-byte Virtio-net transport header is not included here. */
 #define NET_FRAME_BUFFER_SIZE \
     VIRTIO_NET_DRIVER_MAX_FRAME_SIZE
 
+/* IEEE 802 Ethernet II header without the optional FCS: 6 + 6 + 2 bytes. */
 #define NET_ETHERNET_HEADER_SIZE 14
+/* RFC 791 minimum IPv4 header size, with no IP options. */
 #define NET_IPV4_HEADER_SIZE     20
+/* RFC 768 UDP header size. */
 #define NET_UDP_HEADER_SIZE       8
+/* IEEE 802 Ethernet II EtherType 0x0800: the payload is IPv4. */
 #define NET_ETHERNET_IPV4       UINT16_C(0x0800)
+/* IEEE 802 Ethernet II EtherType 0x0806: the payload is ARP. */
 #define NET_ETHERNET_ARP        UINT16_C(0x0806)
+/* IANA IP protocol number 17, assigned to UDP by RFC 768. */
 #define NET_IP_PROTOCOL_UDP     UINT8_C(17)
+/* RFC 826 ARP operation code 1: request an IP-to-MAC mapping. */
 #define NET_ARP_REQUEST         UINT16_C(1)
+/* RFC 826 ARP operation code 2: reply with an IP-to-MAC mapping. */
 #define NET_ARP_REPLY           UINT16_C(2)
+/* RFC 826 fixed ARP payload size for Ethernet + IPv4: 28 bytes. */
 #define NET_ARP_PAYLOAD_SIZE    28
+/* Project limit based on a 1500-byte IPv4 MTU: 1500 - 20 - 8 = 1472. */
 #define NET_MAX_UDP_PAYLOAD     1472
 
 struct network_state {

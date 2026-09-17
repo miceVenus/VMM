@@ -9,18 +9,29 @@ extern void virtio_net_irq_stub(void);
  * The Guest has no allocator, so the transport uses a fixed layout in Guest
  * RAM. These addresses are part of the educational device ABI.
  */
+/* Project queue capacity: each split Virtqueue contains eight descriptors. */
 #define DRIVER_QUEUE_SIZE          8
+/* Alias for the shared fixed-size Virtio transport buffer. */
 #define DRIVER_BUFFER_SIZE         VIRTIO_NET_DRIVER_BUFFER_SIZE
+/* Alias for the standard 10-byte virtio_net_hdr used by this transport. */
 #define DRIVER_VIRTIO_HEADER_SIZE  VIRTIO_NET_DRIVER_HEADER_SIZE
 
+/* Project-defined Guest physical address of the RX split-Virtqueue region. */
 #define DRIVER_RX_QUEUE_GPA        UINT64_C(0x20000)
+/* Project-defined Guest physical address of the TX split-Virtqueue region. */
 #define DRIVER_TX_QUEUE_GPA        UINT64_C(0x21000)
+/* Project-defined Guest physical address of the fixed RX frame buffers. */
 #define DRIVER_RX_BUFFER_GPA       UINT64_C(0x22000)
+/* Project-defined Guest physical address of the fixed TX frame buffer. */
 #define DRIVER_TX_BUFFER_GPA       UINT64_C(0x26000)
 
+/* Project-defined offset of the descriptor table within a queue region. */
 #define DRIVER_DESC_OFFSET         UINT64_C(0x000)
+/* Project-defined offset of the driver/available ring within a queue region. */
 #define DRIVER_AVAIL_OFFSET        UINT64_C(0x100)
+/* Project-defined offset of the device/used ring within a queue region. */
 #define DRIVER_USED_OFFSET         UINT64_C(0x200)
+/* Project-defined amount of Guest RAM cleared for each queue region. */
 #define DRIVER_QUEUE_REGION_SIZE   UINT64_C(0x1000)
 
 struct driver_virtq_descriptor {

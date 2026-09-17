@@ -10,7 +10,12 @@
 #include <memory>
 #include <new>
 
+
+#include <deque>
+
+
 int child_main(args_t& myArgs) {
+
     int status = 0;
     char src[32];
     vm v{};

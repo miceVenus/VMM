@@ -11,11 +11,17 @@
  * NET_IPV4(a, b, c, d).
  */
 
+/* Project network-stack status: the requested operation succeeded. */
 #define NET_OK             0
+/* Project status: a non-blocking operation cannot complete yet; try again. */
 #define NET_WOULD_BLOCK   (-1)
+/* Project status: net_init() has not completed successfully. */
 #define NET_NOT_INITIALIZED (-2)
+/* Project status: a function argument is invalid. */
 #define NET_BAD_ARGUMENT  (-3)
 
+/* Project helper that packs four IPv4 octets into the documented 32-bit
+ * human-readable-order representation, e.g. NET_IPV4(10, 0, 0, 1). */
 #define NET_IPV4(a, b, c, d) \
     ((((uint32_t)(a) & 0xffU) << 24) | (((uint32_t)(b) & 0xffU) << 16) | \
      (((uint32_t)(c) & 0xffU) << 8) | ((uint32_t)(d) & 0xffU))

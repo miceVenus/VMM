@@ -11,6 +11,9 @@
 #include <cstring>
 
 
+#include <queue>
+
+
 int vm_init(struct vm &v, size_t mem_size) {
 	v.vcpu_fd = -1;
 	v.run = nullptr;
