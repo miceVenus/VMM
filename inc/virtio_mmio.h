@@ -3,7 +3,15 @@
 #include <stdint.h>
 
 /*
- * The MMIO layout is shared by the host device model and the guest driver.
+ * MMIO layout shared by the host device model and the guest driver.
+ *
+ * Comment convention: macros marked "standard" derive their values or
+ * semantics from a specification; macros marked "project convention" serve
+ * only this VMM's address-space layout or implementation details and are not
+ * generic Virtio constants. The primary references are OASIS Virtio 1.2
+ * §4.2.2 (MMIO register layout), §2.1 (status bits), §5.1 (network device),
+ * and §2.7.5 (split-virtqueue descriptor flags).
+ *
  * The address is intentionally outside the current guest RAM memslot, so a
  * guest access becomes KVM_EXIT_MMIO and is handled by the VMM.
  */
@@ -31,7 +39,7 @@
  * "UMET". The numeric value is unchanged and is not a standard device ID. */
 #define VIRTIO_MMIO_VENDOR_ID   UINT32_C(0x554d4554) /* historical label: "UMET" */
 
-/* The minimal VMM injects this vector directly with KVM_INTERRUPT. */
+/* Project convention: Guest IDT vector used for Virtio-net interrupts; Virtio does not mandate this value. */
 #define VIRTIO_NET_INTERRUPT_VECTOR UINT32_C(32)
 
 /*
