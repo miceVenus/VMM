@@ -11,11 +11,22 @@
  * NET_IPV4(a, b, c, d).
  */
 
+/*
+ * Project-internal return codes for the network-stack API. These are not
+ * POSIX errno values or values defined by a network protocol specification.
+ * Callers use them to distinguish success, temporary unavailability,
+ * incomplete initialization, and invalid arguments.
+ */
+/* Project convention: the operation succeeded. */
 #define NET_OK             0
+/* Project convention: the operation cannot complete now; poll and retry. */
 #define NET_WOULD_BLOCK   (-1)
+/* Project convention: the network stack has not been initialized successfully. */
 #define NET_NOT_INITIALIZED (-2)
+/* Project convention: an argument is invalid or the driver reported an argument-related failure. */
 #define NET_BAD_ARGUMENT  (-3)
 
+/* Project helper macro: packs four IPv4 octets into a network-byte-order uint32_t; no range validation. */
 #define NET_IPV4(a, b, c, d) \
     ((((uint32_t)(a) & 0xffU) << 24) | (((uint32_t)(b) & 0xffU) << 16) | \
      (((uint32_t)(c) & 0xffU) << 8) | ((uint32_t)(d) & 0xffU))

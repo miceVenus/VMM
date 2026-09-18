@@ -9,18 +9,34 @@ extern void virtio_net_irq_stub(void);
  * The Guest has no allocator, so the transport uses a fixed layout in Guest
  * RAM. These addresses are part of the educational device ABI.
  */
+/*
+ * Specification reference: OASIS Virtio 1.2 §2.7 (split virtqueue) requires
+ * the queue size to be a power of two; 8 is this project's selected RX/TX
+ * queue size, not the only size allowed by the specification.
+ */
+/* Project convention: number of descriptors/ring elements in each RX/TX virtqueue. */
 #define DRIVER_QUEUE_SIZE          8
+/* Project-internal alias: total capacity of one Guest frame buffer. */
 #define DRIVER_BUFFER_SIZE         VIRTIO_NET_DRIVER_BUFFER_SIZE
+/* Project-internal alias: Virtio-net metadata space reserved before each frame. */
 #define DRIVER_VIRTIO_HEADER_SIZE  VIRTIO_NET_DRIVER_HEADER_SIZE
 
+/* Project convention: start of the RX split-virtqueue region in Guest physical memory. */
 #define DRIVER_RX_QUEUE_GPA        UINT64_C(0x20000)
+/* Project convention: start of the TX split-virtqueue region in Guest physical memory. */
 #define DRIVER_TX_QUEUE_GPA        UINT64_C(0x21000)
+/* Project convention: start of the frame-buffer array referenced by RX descriptors. */
 #define DRIVER_RX_BUFFER_GPA       UINT64_C(0x22000)
+/* Project convention: start of the TX frame buffer, after the RX buffer array. */
 #define DRIVER_TX_BUFFER_GPA       UINT64_C(0x26000)
 
+/* Project convention: Descriptor Table offset within one reserved queue region. */
 #define DRIVER_DESC_OFFSET         UINT64_C(0x000)
+/* Project convention: Available Ring (Virtio Driver Area) offset. */
 #define DRIVER_AVAIL_OFFSET        UINT64_C(0x100)
+/* Project convention: Used Ring (Virtio Device Area) offset. */
 #define DRIVER_USED_OFFSET         UINT64_C(0x200)
+/* Project convention: Guest RAM region reserved and cleared for each queue. */
 #define DRIVER_QUEUE_REGION_SIZE   UINT64_C(0x1000)
 
 struct driver_virtq_descriptor {
@@ -252,9 +268,17 @@ static void reclaim_transmit_buffer(void) {
 int virtio_net_driver_init(uint8_t mac[6]) {
     if (mac == NULL) return VIRTIO_NET_DRIVER_BAD_ARGUMENT;
 
+    /*
+     * The driver may be initialized only from a clean software state. The
+     * device itself is reset below by writing zero to its status register.
+     */
     guest_memory_zero(&state, sizeof(state));
     virtio_net_interrupt_pending = 0;
 
+    /*
+     * Virtio initialization starts with a device reset. Afterwards, verify
+     * that the MMIO region really exposes the Virtio-net device we expect.
+     */
     mmio_write32(VIRTIO_MMIO_REG_STATUS, 0);
     if (mmio_read32(VIRTIO_MMIO_REG_MAGIC_VALUE) != VIRTIO_MMIO_MAGIC_VALUE ||
         mmio_read32(VIRTIO_MMIO_REG_VERSION) != VIRTIO_MMIO_VERSION ||
@@ -262,10 +286,21 @@ int virtio_net_driver_init(uint8_t mac[6]) {
         return VIRTIO_NET_DRIVER_BAD_ARGUMENT;
     }
 
+    /*
+     * Status bits describe the initialization handshake:
+     *   ACKNOWLEDGE: the Guest recognized the device;
+     *   DRIVER:      a Guest driver is ready to configure it.
+     * The second write repeats ACKNOWLEDGE because the status register is
+     * written with the complete set of bits that should remain asserted.
+     */
     mmio_write32(VIRTIO_MMIO_REG_STATUS, VIRTIO_STATUS_ACKNOWLEDGE);
     mmio_write32(VIRTIO_MMIO_REG_STATUS,
                  VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
+    /*
+     * Device features are exposed as two 32-bit words. VERSION_1 is bit 32,
+     * while the optional MAC feature is bit 5 in the low word.
+     */
     mmio_write32(VIRTIO_MMIO_REG_DEVICE_FEATURES_SEL, 0);
     const uint32_t device_features_low =
         mmio_read32(VIRTIO_MMIO_REG_DEVICE_FEATURES);
@@ -273,11 +308,11 @@ int virtio_net_driver_init(uint8_t mac[6]) {
     const uint32_t device_features_high =
         mmio_read32(VIRTIO_MMIO_REG_DEVICE_FEATURES);
 
-    if ((device_features_high &
-         (UINT32_C(1) << (VIRTIO_F_VERSION_1 - 32))) == 0) {
+    if ((device_features_high & (UINT32_C(1) << (VIRTIO_F_VERSION_1 - 32))) == 0) {
         return VIRTIO_NET_DRIVER_BAD_ARGUMENT;
     }
 
+    /* Accept the MAC feature when offered and require Virtio 1.x layout. */
     mmio_write32(VIRTIO_MMIO_REG_DRIVER_FEATURES_SEL, 0);
     mmio_write32(VIRTIO_MMIO_REG_DRIVER_FEATURES,
                  device_features_low &
@@ -286,38 +321,52 @@ int virtio_net_driver_init(uint8_t mac[6]) {
     mmio_write32(VIRTIO_MMIO_REG_DRIVER_FEATURES,
                  UINT32_C(1) << (VIRTIO_F_VERSION_1 - 32));
 
+    /*
+     * FEATURES_OK asks the device to validate the negotiated feature set.
+     * Reading the bit back is mandatory: the device may reject it.
+     */
     mmio_write32(VIRTIO_MMIO_REG_STATUS,
                  VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
                  VIRTIO_STATUS_FEATURES_OK);
-    if ((mmio_read32(VIRTIO_MMIO_REG_STATUS) &
-         VIRTIO_STATUS_FEATURES_OK) == 0) {
+    if ((mmio_read32(VIRTIO_MMIO_REG_STATUS) & VIRTIO_STATUS_FEATURES_OK) == 0) {
         return VIRTIO_NET_DRIVER_BAD_ARGUMENT;
     }
 
+    /* The MAC address is exposed through the Virtio-net configuration space. */
     for (int index = 0; index < 6; ++index) {
         mac[index] = *mmio8(VIRTIO_MMIO_REG_CONFIG_SPACE +
                             (uint32_t)index);
     }
 
+    /*
+     * Prepare the fixed Guest-RAM regions and publish both split Virtqueues:
+     * queue 0 receives frames from the device, queue 1 transmits frames.
+     */
     initialize_receive_ring();
     initialize_transmit_ring();
     if (configure_queue(0,
                         DRIVER_RX_QUEUE_GPA + DRIVER_DESC_OFFSET,
                         DRIVER_RX_QUEUE_GPA + DRIVER_AVAIL_OFFSET,
-                        DRIVER_RX_QUEUE_GPA + DRIVER_USED_OFFSET) !=
-            VIRTIO_NET_DRIVER_OK ||
+                        DRIVER_RX_QUEUE_GPA + DRIVER_USED_OFFSET) != VIRTIO_NET_DRIVER_OK ||
         configure_queue(1,
                         DRIVER_TX_QUEUE_GPA + DRIVER_DESC_OFFSET,
                         DRIVER_TX_QUEUE_GPA + DRIVER_AVAIL_OFFSET,
-                        DRIVER_TX_QUEUE_GPA + DRIVER_USED_OFFSET) !=
-            VIRTIO_NET_DRIVER_OK) {
+                        DRIVER_TX_QUEUE_GPA + DRIVER_USED_OFFSET) != VIRTIO_NET_DRIVER_OK) {
         return VIRTIO_NET_DRIVER_BAD_ARGUMENT;
     }
 
+    /*
+     * DRIVER_OK tells the device that feature negotiation and queue setup
+     * have completed. Only after this point may normal frame I/O begin.
+     */
     mmio_write32(VIRTIO_MMIO_REG_STATUS,
                  VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
                  VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
+    /*
+     * The interrupt gate needs a valid GDT/IDT before interrupts are enabled.
+     * KVM will later inject VIRTIO_NET_INTERRUPT_VECTOR into this Guest.
+     */
     install_guest_gdt();
     install_guest_idt();
     state.initialized = 1;
@@ -353,6 +402,7 @@ int virtio_net_driver_send_frame(const uint8_t* frame,
     struct driver_virtq_available* available = tx_available();
     available->ring[available->index % DRIVER_QUEUE_SIZE] = 0;
     guest_memory_barrier();
+    
     ++available->index;
     state.tx_busy = 1;
     mmio_write32(VIRTIO_MMIO_REG_QUEUE_NOTIFY, 1);

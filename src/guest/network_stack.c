@@ -3,18 +3,39 @@
 #include "guest/guest_memory.h"
 #include "guest/virtio_net_driver.h"
 
+/* Project-internal alias: temporary network-stack frame-buffer capacity, limited by the Virtio buffer. */
 #define NET_FRAME_BUFFER_SIZE \
     VIRTIO_NET_DRIVER_MAX_FRAME_SIZE
 
+/*
+ * Standard: IEEE 802.3/Ethernet II frame format; RFC 894 specifies EtherType
+ * encapsulation for IPv4 over Ethernet. 14 = destination MAC (6) + source
+ * MAC (6) + EtherType (2).
+ */
+/* Standard: Ethernet II header length, in bytes. */
 #define NET_ETHERNET_HEADER_SIZE 14
+/* Standard: RFC 791 §3.1 minimum IPv4 header length (IHL=5), not the maximum with options. */
 #define NET_IPV4_HEADER_SIZE     20
+/* Standard: fixed UDP header length from RFC 768, in bytes. */
 #define NET_UDP_HEADER_SIZE       8
+/* Standard: IANA IEEE 802 EtherType registry / RFC 894; 0x0800 denotes IPv4. */
 #define NET_ETHERNET_IPV4       UINT16_C(0x0800)
+/* Standard: IANA IEEE 802 EtherType registry / RFC 826; 0x0806 denotes ARP. */
 #define NET_ETHERNET_ARP        UINT16_C(0x0806)
+/* Standard: IANA Protocol Numbers / RFC 768; UDP's number in the IPv4 Protocol field. */
 #define NET_IP_PROTOCOL_UDP     UINT8_C(17)
+/* Standard: RFC 826; ARP opcode 1, requesting the hardware address for a protocol address. */
 #define NET_ARP_REQUEST         UINT16_C(1)
+/* Standard: RFC 826; ARP opcode 2, returning a hardware-address mapping. */
 #define NET_ARP_REPLY           UINT16_C(2)
+/* Standard: 28-byte Ethernet/IPv4 ARP payload defined by RFC 826. */
 #define NET_ARP_PAYLOAD_SIZE    28
+/*
+ * Project convention: maximum UDP payload derived from RFC 894's 1500-byte
+ * Ethernet data-field limit: 1500 - 20-byte minimum IPv4 header - 8-byte UDP
+ * header = 1472. IPv4 options are excluded, and this stack does not rely on
+ * fragmentation to send larger datagrams.
+ */
 #define NET_MAX_UDP_PAYLOAD     1472
 
 struct network_state {
