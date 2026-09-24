@@ -1,62 +1,29 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef GUEST_BUILD
 
-/*
- * Guest-side network API. The implementation is split between a small
- * Virtio-net transport and a minimal Ethernet/ARP/IPv4/UDP protocol stack.
- * IP addresses are represented in the human-readable order used by
- * NET_IPV4(a, b, c, d).
- */
+/* Project status: the requested operation completed successfully. */
+#define VIRTIO_NET_OK 0
+/* Project status: no completed RX frame or free TX descriptor is available. */
+#define VIRTIO_NET_WOULD_BLOCK (-1)
+/* Project status: the driver has not been initialized. */
+#define VIRTIO_NET_NOT_INITIALIZED (-2)
+/* Project status: an argument or device configuration is invalid. */
+#define VIRTIO_NET_BAD_ARGUMENT (-3)
+/* Project status: a received Ethernet frame does not fit the caller's buffer. */
+#define VIRTIO_NET_FRAME_TOO_LARGE (-4)
 
-/* Project network-stack status: the requested operation succeeded. */
-#define NET_OK             0
-/* Project status: a non-blocking operation cannot complete yet; try again. */
-#define NET_WOULD_BLOCK   (-1)
-/* Project status: net_init() has not completed successfully. */
-#define NET_NOT_INITIALIZED (-2)
-/* Project status: a function argument is invalid. */
-#define NET_BAD_ARGUMENT  (-3)
+/* Virtio 1.2 net header size when all checksum/segmentation offloads are off. */
+#define VIRTIO_NET_HEADER_SIZE 10U
+/* Project buffer capacity; includes an Ethernet frame but not the Virtio header. */
+#define VIRTIO_NET_FRAME_CAPACITY 1514U
 
-/* Project helper that packs four IPv4 octets into the documented 32-bit
- * human-readable-order representation, e.g. NET_IPV4(10, 0, 0, 1). */
-#define NET_IPV4(a, b, c, d) \
-    ((((uint32_t)(a) & 0xffU) << 24) | (((uint32_t)(b) & 0xffU) << 16) | \
-     (((uint32_t)(c) & 0xffU) << 8) | ((uint32_t)(d) & 0xffU))
-
-/* Initializes the Virtio-net device and returns 0 on success. */
-int net_init(void);
-
-/* The addresses are assigned from the VM-specific MAC address. */
-uint32_t net_local_ip(void);
-uint32_t net_gateway_ip(void);
-
-/*
- * Sends one UDP datagram.  If ARP resolution is still pending, the function
- * returns NET_WOULD_BLOCK; call net_poll() and retry the send.
- */
-int net_udp_send(uint32_t destination_ip,
-                uint16_t source_port,
-                uint16_t destination_port,
-                const void* payload,
-                uint16_t payload_length);
-
-/*
- * Polls RX, answers ARP, and returns one UDP payload addressed to this VM.
- * The return value is the payload length, or NET_WOULD_BLOCK when no matching
- * datagram is currently available.
- */
-int net_udp_receive(uint32_t* source_ip,
-                    uint16_t* source_port,
-                    void* payload,
-                    uint16_t payload_capacity);
-
-/* Useful for demos that only need to service ARP/TAP traffic. */
-void net_poll(void);
-
-/* Sleeps until the Virtio device raises the Guest interrupt. */
-void net_wait(void);
+int virtio_net_init(uint8_t mac[6]);
+int virtio_net_send_frame(const uint8_t* frame, uint16_t length);
+int virtio_net_receive_frame(uint8_t* frame, size_t capacity);
+void virtio_net_poll(void);
 
 #endif

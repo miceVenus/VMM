@@ -33,6 +33,22 @@ int vm_init(struct vm &v, size_t mem_size) {
 	v.vm_fd = ioctl(v.kvm_fd, KVM_CREATE_VM, 0);
 	if (v.vm_fd < 0) return 0x12;
 
+	/* Create the in-kernel PIC/IOAPIC before the vCPU. This small VMM only
+	 * wires one legacy PIC input; replacing the default routes avoids also
+	 * presenting the same Virtio interrupt to the unconfigured IOAPIC. */
+	if (ioctl(v.vm_fd, KVM_CREATE_IRQCHIP, 0) < 0) return 0x18;
+
+	struct {
+		struct kvm_irq_routing header;
+		struct kvm_irq_routing_entry entry;
+	} routing{};
+	routing.header.nr = 1;
+	routing.entry.gsi = VIRTIO_NET_GSI;
+	routing.entry.type = KVM_IRQ_ROUTING_IRQCHIP;
+	routing.entry.u.irqchip.irqchip = KVM_IRQCHIP_PIC_MASTER;
+	routing.entry.u.irqchip.pin = VIRTIO_NET_PIC_IRQ;
+	if (ioctl(v.vm_fd, KVM_SET_GSI_ROUTING, &routing) < 0) return 0x19;
+
 	v.mem_start = (uint8_t*)mmap(0, mem_size, PROT_READ | PROT_WRITE,
 		   MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 	if (v.mem_start == MAP_FAILED) return 0x13;

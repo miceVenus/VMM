@@ -2,8 +2,6 @@
 #pragma once
 
 #include <cstddef>
-#include <condition_variable>
-#include <mutex>
 #include <stdint.h>
 #include <linux/kvm.h>
 
@@ -68,10 +66,6 @@ struct vm {
     struct kvm_sregs sregs;
     virtio_net* net; /* Non-owning; child_main owns the device object. */
 
-    /* TAP can inject an interrupt while the vCPU is outside KVM_RUN. */
-    std::mutex interrupt_mutex;
-    std::condition_variable interrupt_cv;
-    bool interrupt_wakeup = false;
 };
 
 

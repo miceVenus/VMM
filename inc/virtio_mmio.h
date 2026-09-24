@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "virtio_defs.h"
 
 /*
  * MMIO layout shared by the host device model and the guest driver.
@@ -32,15 +33,21 @@
 /* Virtio MMIO specification version 2. */
 #define VIRTIO_MMIO_VERSION     UINT32_C(2)
 
-/* Virtio device ID 1, assigned to a network device by the Virtio spec. */
-#define VIRTIO_MMIO_DEVICE_NET  UINT32_C(1)
+/* Compatibility alias for the transport-independent Virtio network ID. */
+#define VIRTIO_MMIO_DEVICE_NET VIRTIO_DEVICE_ID_NET
 
 /* Project-defined vendor identifier; the source historically labels it
  * "UMET". The numeric value is unchanged and is not a standard device ID. */
 #define VIRTIO_MMIO_VENDOR_ID   UINT32_C(0x554d4554) /* historical label: "UMET" */
 
-/* Project convention: Guest IDT vector used for Virtio-net interrupts; Virtio does not mandate this value. */
-#define VIRTIO_NET_INTERRUPT_VECTOR UINT32_C(32)
+/* Project-defined legacy interrupt routing for this x86-only VMM. The Host
+ * routes GSI 5 to master-PIC IRQ 5; the Guest remaps the PIC master to 0x20,
+ * making the corresponding IDT vector 0x25. These values are not Virtio IDs. */
+#define VIRTIO_NET_GSI                  UINT32_C(5)
+#define VIRTIO_NET_PIC_IRQ              UINT32_C(5)
+#define VIRTIO_PIC_MASTER_VECTOR_BASE   UINT32_C(0x20)
+#define VIRTIO_NET_INTERRUPT_VECTOR \
+    (VIRTIO_PIC_MASTER_VECTOR_BASE + VIRTIO_NET_PIC_IRQ)
 
 /*
  * Virtio 1.2, section "MMIO Device Configuration": offsets of the common
@@ -94,33 +101,3 @@
 #define VIRTIO_MMIO_REG_CONFIG_GENERATION UINT32_C(0x0fc)
 /* Start of the device-specific configuration space, containing the MAC. */
 #define VIRTIO_MMIO_REG_CONFIG_SPACE      UINT32_C(0x100)
-
-/*
- * Virtio 1.2 device-status bits. The driver sets these during the standard
- * ACKNOWLEDGE -> DRIVER -> FEATURES_OK -> DRIVER_OK initialization sequence.
- */
-/* Driver has noticed the device. */
-#define VIRTIO_STATUS_ACKNOWLEDGE UINT8_C(0x01)
-/* Driver is loaded and ready to use the device. */
-#define VIRTIO_STATUS_DRIVER     UINT8_C(0x02)
-/* Device initialization completed successfully. */
-#define VIRTIO_STATUS_DRIVER_OK  UINT8_C(0x04)
-/* Driver accepted the negotiated feature set. */
-#define VIRTIO_STATUS_FEATURES_OK UINT8_C(0x08)
-/* Device detected an unrecoverable configuration/operation error. */
-#define VIRTIO_STATUS_FAILED     UINT8_C(0x80)
-
-/*
- * Virtio 1.2 feature-bit numbers. These are bit positions, not bit masks;
- * callers create masks with (1ULL << feature_number).
- */
-/* VIRTIO_F_VERSION_1: modern Virtio 1.x interface. */
-#define VIRTIO_F_VERSION_1 UINT32_C(32)
-/* VIRTIO_NET_F_MAC: the device supplies a MAC in configuration space. */
-#define VIRTIO_NET_F_MAC   UINT32_C(5)
-
-/* Virtio 1.2 split Virtqueue descriptor flags. */
-/* Descriptor points to another descriptor through its `next` field. */
-#define VIRTQ_DESC_F_NEXT  UINT16_C(1)
-/* Device writes data into the descriptor's buffer (used by RX buffers). */
-#define VIRTQ_DESC_F_WRITE UINT16_C(2)

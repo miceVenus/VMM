@@ -34,6 +34,8 @@ int child_main(args_t& myArgs) {
     case 0x15: LOG(src, "KVM_CREATE_VCPU", RED_PREFIX); break;
     case 0x16: LOG(src, "KVM_GET_VCPU_MMAP_SIZE", RED_PREFIX); break;
     case 0x17: LOG(src, "MMAP KVM_RUN", RED_PREFIX); break;
+    case 0x18: LOG(src, "KVM_CREATE_IRQCHIP", RED_PREFIX); break;
+    case 0x19: LOG(src, "KVM_SET_GSI_ROUTING", RED_PREFIX); break;
     default:   LOG(src, "Unexpected error.", RED_PREFIX); break;
     }
     if (status != 0) goto cleanup;
@@ -70,12 +72,12 @@ int child_main(args_t& myArgs) {
     if (myArgs.network) {
         network_device.reset(new (std::nothrow) virtio_net(v, vm_id));
         if (network_device == nullptr || !network_device->initialize()) {
-            LOG(src, "Couldn't create the Virtio-net TAP device.", RED_PREFIX);
+            LOG(src, "Couldn't initialize the Virtio-net vhost/TAP backend.", RED_PREFIX);
             status = 0x60;
             goto cleanup;
         }
         char message[80];
-        sprintf(message, "Virtio-net attached to %s.",
+        sprintf(message, "Virtio-net vhost backend attached to %s.",
                 network_device->tap_name().c_str());
         LOG(src, message, GREEN_PREFIX);
     }

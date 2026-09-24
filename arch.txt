@@ -1,0 +1,80 @@
+# Freestanding Guest Networking Architecture
+
+## Goal
+
+The project keeps its KVM/vhost-net Host backend and implements the Guest
+frontend freestanding. The Guest owns a small Virtio-net driver and the minimum
+Ethernet, ARP, IPv4, and UDP functionality needed for a UDP Echo test. The
+existing TAP setup scripts configure the Host as the Guest's gateway and apply
+forwarding/NAT toward an uplink. No new Host packet-processing backend is
+needed: vhost-net owns the Virtio data path.
+
+## Packet path
+
+```text
+testN1/guest.c
+  UDP Echo request / response validation
+       │
+src/guest/network_stack.c
+  UDP ── IPv4 ── ARP ── Ethernet II
+       │ Ethernet frames
+src/guest/virtio_net.c
+  Virtio-MMIO v2; split RX queue 0 and TX queue 1
+       │ shared Guest-RAM rings/buffers + QUEUE_NOTIFY
+KVM_IOEVENTFD ── vhost-net ── TAP (vmtapN)
+       │
+Host kernel: TAP address + IP forwarding + MASQUERADE
+       │
+Host uplink ── configured UDP Echo peer
+```
+
+The Host continues to own the Virtio-MMIO register model, vhost lifecycle,
+TAP fd, and KVM eventfd wiring. Guest queue notifications are delivered to
+vhost-net without a userspace per-packet ring parser. This work changes only
+the Guest networking path and its demo/build documentation; the Host backend
+and TAP/NAT scripts remain the existing implementation.
+
+## Guest responsibilities
+
+- `virtio_net.c` negotiates `VERSION_1` and `NET_F_MAC`, reads the device MAC,
+  and configures RX queue 0 and TX queue 1 with split rings in Guest DMA memory.
+- TX copies one Ethernet frame into a Virtio buffer and publishes it to the
+  available ring. RX consumes the used ring, strips the 10-byte Virtio-net
+  header, copies the frame to the protocol layer, and recycles the descriptor.
+- Both queues use `VIRTQ_AVAIL_F_NO_INTERRUPT`; the demo polls completion and
+  receive rings instead of installing a Guest interrupt handler.
+- `network_stack.c` builds/parses Ethernet II, answers ARP for the Guest IP,
+  learns the TAP gateway MAC, creates/validates basic IPv4 headers, and sends
+  or receives UDP datagrams. Outbound IP traffic uses the configured gateway.
+- `testN1/guest.c` sends a fixed payload to a configurable UDP Echo endpoint
+  and verifies the response source, source port, and exact payload.
+
+The Guest has no libc, scheduler, sockets, DHCP, TCP, general ARP cache,
+fragment reassembly, or IPv4 routing table. Its static `10.200.<vm+1>.2/24`
+address and `10.200.<vm+1>.1` gateway match `scripts/net-setup.sh`.
+
+## Echo and NAT validation
+
+The default Guest destination is the TAP gateway on UDP port 9999. The VMM
+does not include a UDP Echo service, so a separate service must be available at
+that endpoint for the local TAP test. For an end-to-end NAT test, build the
+Guest with `UDP_ECHO_IP` and `UDP_ECHO_PORT` set to an external, reachable UDP
+Echo service. Then start the VMM with `--net`, run `scripts/net-setup.sh` for
+the VM and uplink, and observe the Guest's success message after it validates
+the returned peer and payload.
+
+ARP retry is intentional: the Guest can begin running before the TAP interface
+has been assigned its gateway address by the setup script.
+
+## Current scope and limitations
+
+This is a single-vCPU x86-64 freestanding test image using one fixed
+Virtio-MMIO network device. The transport uses one fixed DMA arena and queue
+sizes up to eight entries. The protocol layer supports untagged Ethernet II,
+basic ARP, IPv4 with header checksum validation, and UDP; it does not implement
+DHCP, ICMP, TCP, VLANs, IP options beyond skipping their header length,
+fragmentation, or multiple pending UDP datagrams.
+
+The VMM continues to offer its vhost IRQFD/resample path for frontends that
+enable interrupts. This polling Guest suppresses Virtio completion interrupts
+and therefore does not depend on Guest PIC/IDT setup.

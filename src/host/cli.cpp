@@ -89,7 +89,7 @@ void print_help() {
     printf("                           mem: specifies total guest memory. Valid entries: 2, 4, 8 [MiB]\n");
     printf("                       Each VM uses one vCPU and 2 MiB paging.\n");
     printf("                       Example: --vm=image=vm1.bin,mem=2\n");
-    printf("  --net                Attach one Virtio-net/TAP interface to every VM\n");
+    printf("  --net                Attach one vhost-net/TAP Virtio-net device to every VM\n");
     printf("                       TAP names are vmtap0, vmtap1, ...\n");
     printf("  --help               Show this help message and exit\n");
 }

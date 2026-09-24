@@ -5,7 +5,7 @@
 
 /*
  * The freestanding Guest cannot rely on libc. These tiny helpers are shared
- * by the Virtio transport and the protocol stack.
+ * by the freestanding Virtio-net driver, its protocol stack, and the demo.
  */
 static inline void guest_memory_zero(void* address, size_t length) {
     uint8_t* bytes = (uint8_t*)address;
@@ -21,5 +21,5 @@ static inline void guest_memory_copy(void* destination,
 }
 
 static inline void guest_memory_barrier(void) {
-    asm volatile("" ::: "memory");
+    __sync_synchronize();
 }

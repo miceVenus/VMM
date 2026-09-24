@@ -7,7 +7,6 @@
 #include <sys/ioctl.h>
 
 #include <cstdio>
-#include <mutex>
 
 int vm_id;
 
@@ -17,12 +16,6 @@ bool guest_interrupts_enabled(const vm& v) {
     struct kvm_regs regs{};
     if (ioctl(v.vcpu_fd, KVM_GET_REGS, &regs) < 0) return false;
     return (regs.rflags & (UINT64_C(1) << 9)) != 0;
-}
-
-void wait_for_guest_interrupt(vm& v) {
-    std::unique_lock<std::mutex> lock(v.interrupt_mutex);
-    v.interrupt_cv.wait(lock, [&v] { return v.interrupt_wakeup; });
-    v.interrupt_wakeup = false;
 }
 
 } // namespace
@@ -97,7 +90,8 @@ int run_vcpu(struct vm &v) {
 
         case KVM_EXIT_HLT:
             if (v.net && guest_interrupts_enabled(v)) {
-                wait_for_guest_interrupt(v);
+                /* Re-enter KVM_RUN. With the in-kernel irqchip, an IRQFD
+                 * interrupt wakes this halted vCPU and is delivered there. */
                 break;
             }
             stop = true;
