@@ -102,8 +102,7 @@ ls /dev/vhost-net
 
 ```text
 src/host/virtio_net.cpp    Virtio-MMIO control plane and vhost coordination
-src/host/vhost.cpp         Generic Linux vhost endpoint
-src/host/vhost_net.cpp     vhost-net backend bound to TAP
+src/host/vhost_net.cpp     vhost-net setup and TAP backend
 src/host/tap_device.cpp    TAP interface lifetime
 src/guest/virtio_net.c     Freestanding Virtio-MMIO split-ring RX/TX driver
 src/guest/network_stack.c  Ethernet, ARP, IPv4, and UDP processing

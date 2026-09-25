@@ -117,7 +117,6 @@ bool virtio_net::configure_vhost_queue(uint16_t index) {
     const vhost_vring_config config{
         index,
         queue.size,
-        0,
         reinterpret_cast<uintptr_t>(owner_.mem_start +
                                     queue.descriptor_address),
         reinterpret_cast<uintptr_t>(owner_.mem_start +
@@ -394,6 +393,56 @@ uint64_t virtio_net::read_mmio_value(uint32_t offset,
     return read_register(offset);
 }
 
+void virtio_net::acknowledge_interrupt(uint32_t value) {
+    interrupt_status_ &= ~value;
+    if ((value & UINT32_C(1)) == 0) return;
+
+    for (queue_config& queue : queues_) {
+        if (queue.ready) {
+            queue.acknowledged_used_index = used_ring_index(queue);
+        }
+    }
+
+    /* In resample mode KVM deasserts the PIC line on Guest EOI and notifies
+     * this eventfd. If a completion raced with the Guest's ACK snapshot,
+     * signal the shared source eventfd again. */
+    bool irq_was_resampled = false;
+    for (;;) {
+        uint64_t resampled = 0;
+        const ssize_t bytes = ::read(resample_fd_, &resampled, sizeof(resampled));
+        if (bytes == static_cast<ssize_t>(sizeof(resampled))) {
+            irq_was_resampled = true;
+            continue;
+        }
+        if (bytes < 0 && errno == EINTR) continue;
+        if (bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        }
+        if (bytes < 0) {
+            std::perror("read KVM IRQ resample eventfd");
+        } else {
+            std::fprintf(stderr, "Short read from KVM IRQ resample eventfd.\n");
+        }
+        break;
+    }
+
+    if (!irq_was_resampled) return;
+
+    for (const queue_config& queue : queues_) {
+        if (!queue.ready ||
+            used_ring_index(queue) == queue.acknowledged_used_index) {
+            continue;
+        }
+
+        const uint64_t reassert = 1;
+        if (::write(call_fd_, &reassert, sizeof(reassert)) !=
+            static_cast<ssize_t>(sizeof(reassert))) {
+            std::perror("reassert pending Virtio IRQ");
+        }
+        break;
+    }
+}
+
 void virtio_net::reset_device() {
     stop_vhost();
     status_ = 0;
@@ -410,6 +459,25 @@ void virtio_net::reset_device() {
         queue.available_ring_address = 0;
         queue.used_ring_address = 0;
         queue.acknowledged_used_index = 0;
+    }
+}
+
+void virtio_net::write_status(uint8_t value) {
+    if (value == 0) {
+        reset_device();
+        return;
+    }
+
+    status_ = value;
+    if ((status_ & VIRTIO_STATUS_FEATURES_OK) &&
+        ((driver_features_ & ~offered_features) != 0 ||
+         (driver_features_ & version_1_feature) == 0)) {
+        status_ |= VIRTIO_STATUS_FAILED;
+    }
+    if ((status_ & VIRTIO_STATUS_DRIVER_OK) &&
+        (status_ & VIRTIO_STATUS_FAILED) == 0 &&
+        !configure_vhost()) {
+        status_ |= VIRTIO_STATUS_FAILED;
     }
 }
 
@@ -485,81 +553,11 @@ void virtio_net::write_register(uint32_t offset, uint64_t value) {
             }
             break;
         case VIRTIO_MMIO_REG_INTERRUPT_ACK:
-            interrupt_status_ &= ~static_cast<uint32_t>(value);
-            if ((value & UINT32_C(1)) != 0) {
-                for (queue_config& queue : queues_) {
-                    if (queue.ready) {
-                        queue.acknowledged_used_index =
-                            used_ring_index(queue);
-                    }
-                }
-
-                /* In resample mode KVM deasserts the PIC line on Guest EOI
-                 * and notifies this eventfd. If a completion raced with the
-                 * Guest's ACK snapshot, signal the shared source eventfd
-                 * again so the still-pending used-ring work gets another
-                 * interrupt. */
-                bool irq_was_resampled = false;
-                for (;;) {
-                    uint64_t resampled = 0;
-                    const ssize_t bytes = ::read(
-                        resample_fd_, &resampled, sizeof(resampled));
-                    if (bytes == static_cast<ssize_t>(sizeof(resampled))) {
-                        irq_was_resampled = true;
-                        continue;
-                    }
-                    if (bytes < 0 && errno == EINTR) continue;
-                    if (bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                        break;
-                    }
-                    if (bytes < 0) {
-                        std::perror("read KVM IRQ resample eventfd");
-                    } else {
-                        std::fprintf(stderr,
-                                     "Short read from KVM IRQ resample eventfd.\n");
-                    }
-                    break;
-                }
-
-                if (irq_was_resampled) {
-                    bool work_remains = false;
-                    for (const queue_config& queue : queues_) {
-                        if (queue.ready && used_ring_index(queue) !=
-                                queue.acknowledged_used_index) {
-                            work_remains = true;
-                            break;
-                        }
-                    }
-                    if (work_remains) {
-                        const uint64_t reassert = 1;
-                        if (::write(call_fd_, &reassert, sizeof(reassert)) !=
-                            static_cast<ssize_t>(sizeof(reassert))) {
-                            std::perror("reassert pending Virtio IRQ");
-                        }
-                    }
-                }
-            }
+            acknowledge_interrupt(static_cast<uint32_t>(value));
             break;
-        case VIRTIO_MMIO_REG_STATUS: {
-            const uint8_t new_status = static_cast<uint8_t>(value);
-            if (new_status == 0) {
-                reset_device();
-                break;
-            }
-
-            status_ = new_status;
-            if ((status_ & VIRTIO_STATUS_FEATURES_OK) &&
-                ((driver_features_ & ~offered_features) != 0 ||
-                 (driver_features_ & version_1_feature) == 0)) {
-                status_ |= VIRTIO_STATUS_FAILED;
-            }
-            if ((status_ & VIRTIO_STATUS_DRIVER_OK) &&
-                (status_ & VIRTIO_STATUS_FAILED) == 0 &&
-                !configure_vhost()) {
-                status_ |= VIRTIO_STATUS_FAILED;
-            }
+        case VIRTIO_MMIO_REG_STATUS:
+            write_status(static_cast<uint8_t>(value));
             break;
-        }
         default:
             /* Network configuration is read-only in this implementation. */
             break;
@@ -577,8 +575,7 @@ bool virtio_net::handle_mmio(struct kvm_run& run) {
         return false;
     }
 
-    const uint32_t offset =
-        static_cast<uint32_t>(address - VIRTIO_MMIO_BASE_GPA);
+    const uint32_t offset = static_cast<uint32_t>(address - VIRTIO_MMIO_BASE_GPA);
     if (run.mmio.is_write) {
         write_register(offset,
                        load_little_endian(run.mmio.data, length));

@@ -1,11 +1,20 @@
 #pragma once
 
-#include "host/vhost.hpp"
-
+#include <array>
+#include <cstddef>
 #include <cstdint>
-#include <vector>
 
-/* vhost-net-specific adapter: attaches a generic vhost vring to a TAP fd. */
+struct vhost_vring_config {
+    uint32_t index;
+    uint32_t size;
+    uint64_t descriptor_userspace_address;
+    uint64_t available_userspace_address;
+    uint64_t used_userspace_address;
+    int kick_fd;
+    int call_fd;
+};
+
+/* Owns /dev/vhost-net and connects its two queues to a TAP fd. */
 class vhost_net {
 public:
     vhost_net() = default;
@@ -17,12 +26,12 @@ public:
     bool initialize(void* guest_memory, size_t guest_memory_size);
     bool set_features(uint64_t negotiated_features);
     bool configure_queue(const vhost_vring_config& queue, int tap_fd);
-    bool reset() noexcept;
-
-    uint64_t features() const noexcept;
+    void reset() noexcept;
 
 private:
-    vhost_device device_;
-    std::vector<bool> backend_attached_;
+    int fd_ = -1;
+    uint64_t features_ = 0;
+    std::array<bool, 2> backend_attached_{};
+    bool owner_set_ = false;
     bool initialized_ = false;
 };

@@ -1,112 +1,106 @@
-#include <sys/wait.h>
-
-#include "host/vcpu.hpp"
 #include "host/cli.hpp"
 #include "host/kvm.hpp"
-#include "host/virtio_net.hpp"
 #include "host/log.hpp"
+#include "host/vcpu.hpp"
+#include "host/virtio_net.hpp"
 
 #include <cstdio>
 #include <memory>
-#include <new>
+#include <sys/wait.h>
+#include <unistd.h>
 
+namespace {
 
-#include <deque>
+const char* error_message(int status) {
+    switch (status) {
+    case 0x10: return "Couldn't open /dev/kvm.";
+    case 0x11: return "KVM API mismatch.";
+    case 0x12: return "KVM_CREATE_VM";
+    case 0x13: return "MMAP MEM";
+    case 0x14: return "KVM_SET_USER_MEMORY_REGION";
+    case 0x15: return "KVM_CREATE_VCPU";
+    case 0x16: return "KVM_GET_VCPU_MMAP_SIZE";
+    case 0x17: return "MMAP KVM_RUN";
+    case 0x18: return "KVM_CREATE_IRQCHIP";
+    case 0x19: return "KVM_SET_GSI_ROUTING";
+    case 0x20: return "KVM_GET_SREGS";
+    case 0x22: return "KVM_SET_SREGS";
+    case 0x30: return "Failed to open guest image.";
+    case 0x31: return "Failed to reach the EOF.";
+    case 0x32: return "Failed to get size of guest image.";
+    case 0x33: return "Guest image is too large.";
+    case 0x34: return "Failed to read guest image.";
+    case 0x40: return "KVM_SET_REGS";
+    case 0x50: return "KVM_RUN";
+    case 0x51: return "Hard exit - forceful shutdown.";
+    case 0x52: return "Unexpected exit cause.";
+    default: return "Unexpected error.";
+    }
+}
 
+void log_result(const char* source, int status, const char* success_message) {
+    LOG(source, status == 0 ? success_message : error_message(status),
+        status == 0 ? GREEN_PREFIX : RED_PREFIX);
+}
 
-int child_main(args_t& myArgs) {
+int child_main(const vm_args_t& config, bool network, int vm_id) {
+    char source[32];
+    std::snprintf(source, sizeof(source), "[VM-%d]", vm_id);
 
-    int status = 0;
-    char src[32];
     vm v{};
     std::unique_ptr<virtio_net> network_device;
 
-    sprintf(src, "[VM-%d]", vm_id);
-
-    status = vm_init(v, myArgs.vms[vm_id].memory_sz);
-    switch (status) {
-    case 0x00: LOG(src, "VM initialized successfully.", GREEN_PREFIX); break;
-    case 0x10: LOG(src, "Couldn't open /dev/kvm.", RED_PREFIX); break;
-    case 0x11: LOG(src, "KVM API mismatch.", RED_PREFIX); break;
-    case 0x12: LOG(src, "KVM_CREATE_VM", RED_PREFIX); break;
-    case 0x13: LOG(src, "MMAP MEM", RED_PREFIX); break;
-    case 0x14: LOG(src, "KVM_SET_USER_MEMORY_REGION", RED_PREFIX); break;
-    case 0x15: LOG(src, "KVM_CREATE_VCPU", RED_PREFIX); break;
-    case 0x16: LOG(src, "KVM_GET_VCPU_MMAP_SIZE", RED_PREFIX); break;
-    case 0x17: LOG(src, "MMAP KVM_RUN", RED_PREFIX); break;
-    case 0x18: LOG(src, "KVM_CREATE_IRQCHIP", RED_PREFIX); break;
-    case 0x19: LOG(src, "KVM_SET_GSI_ROUTING", RED_PREFIX); break;
-    default:   LOG(src, "Unexpected error.", RED_PREFIX); break;
-    }
+    int status = vm_init(v, config.memory_sz);
+    log_result(source, status, "VM initialized successfully.");
     if (status != 0) goto cleanup;
 
     status = setup_long_mode(v);
-    switch (status) {
-    case 0x00: LOG(src, "Long mode setup successfully.", GREEN_PREFIX); break;
-    case 0x20: LOG(src, "KVM_GET_SREGS", RED_PREFIX); break;
-    case 0x22: LOG(src, "KVM_SET_SREGS", RED_PREFIX); break;
-    default:   LOG(src, "Unexpected error.", RED_PREFIX); break;
-    }
+    log_result(source, status, "Long mode setup successfully.");
     if (status != 0) goto cleanup;
 
-    status = load_guest_image(v, myArgs.vms[vm_id].image.c_str());
-    switch (status) {
-    case 0x00: LOG(src, "Guest image loaded successfully.", GREEN_PREFIX); break;
-    case 0x30: LOG(src, "Failed to open guest image.", RED_PREFIX); break;
-    case 0x31: LOG(src, "Failed to reach the EOF.", RED_PREFIX); break;
-    case 0x32: LOG(src, "Failed to get size of guest image.", RED_PREFIX); break;
-    case 0x33: LOG(src, "Guest image is too large.", RED_PREFIX); break;
-    case 0x34: LOG(src, "Failed to read guest image.", RED_PREFIX); break;
-    default:   LOG(src, "Unexpected error.", RED_PREFIX); break;
-    }
+    status = load_guest_image(v, config.image.c_str());
+    log_result(source, status, "Guest image loaded successfully.");
     if (status != 0) goto cleanup;
 
     status = set_context(v);
-    switch (status) {
-    case 0x00: LOG(src, "Guest registers set successfully.", GREEN_PREFIX); break;
-    case 0x40: LOG(src, "KVM_SET_REGS", RED_PREFIX); break;
-    default:   LOG(src, "Unexpected error.", RED_PREFIX); break;
-    }
+    log_result(source, status, "Guest registers set successfully.");
     if (status != 0) goto cleanup;
 
-    if (myArgs.network) {
-        network_device.reset(new (std::nothrow) virtio_net(v, vm_id));
-        if (network_device == nullptr || !network_device->initialize()) {
-            LOG(src, "Couldn't initialize the Virtio-net vhost/TAP backend.", RED_PREFIX);
+    if (network) {
+        network_device = std::make_unique<virtio_net>(v, vm_id);
+        if (!network_device->initialize()) {
             status = 0x60;
+            LOG(source, "Couldn't initialize the Virtio-net vhost/TAP backend.",
+                RED_PREFIX);
             goto cleanup;
         }
         char message[80];
-        sprintf(message, "Virtio-net vhost backend attached to %s.",
-                network_device->tap_name().c_str());
-        LOG(src, message, GREEN_PREFIX);
+        std::snprintf(message, sizeof(message),
+                      "Virtio-net vhost backend attached to %s.",
+                      network_device->tap_name().c_str());
+        LOG(source, message, GREEN_PREFIX);
     }
 
-    status = run_vcpu(v);
-    switch (status) {
-    case 0x00: LOG(src, "Graceful exit - HLT reached.", GREEN_PREFIX); break;
-    case 0x50: LOG(src, "KVM_RUN", RED_PREFIX); break;
-    case 0x51: LOG(src, "Hard exit - forceful shutdown.", RED_PREFIX); break;
-    case 0x52: LOG(src, "Unexpected exit cause.", RED_PREFIX); break;
-    default:   LOG(src, "Unexpected error.", RED_PREFIX); break;
-    }
+    status = run_vcpu(v, vm_id);
+    log_result(source, status, "Graceful exit - HLT reached.");
 
 cleanup:
     network_device.reset();
-    v.net = nullptr;
     vm_destroy(v);
     return status;
 }
 
+} // namespace
+
 int main(int argc, char* argv[]) {
-    char src[64];
-    args_t myArgs;
-    int status = read_args(argc, argv, myArgs);
+    char source[64];
+    args_t args;
+    const int status = read_args(argc, argv, args);
 
     switch (status) {
     case 0: LOG("[HOST]", "Arguments read successfully.", GREEN_PREFIX); break;
-    case 1: LOG("[HOST]", "Invalid argument format.", RED_PREFIX); print_help(); break;
-    case 2: LOG("[HOST]", "Invalid number of arguments.", RED_PREFIX); print_help(); break;
+    case 1: LOG("[HOST]", "Missing VM configuration.", RED_PREFIX); print_help(); break;
+    case 2: LOG("[HOST]", "Invalid argument format.", RED_PREFIX); print_help(); break;
     case 3: LOG("[HOST]", "Argument set twice.", RED_PREFIX); break;
     case 4: LOG("[HOST]", "Invalid argument value.", RED_PREFIX); break;
     case 5: return 0;
@@ -115,35 +109,36 @@ int main(int argc, char* argv[]) {
 
     if (status != 0) return status;
 
-    for (size_t vm_index = 0; vm_index < myArgs.vms.size(); ++vm_index) {
-        pid_t pid = fork();
+    for (size_t vm_index = 0; vm_index < args.vms.size(); ++vm_index) {
+        const pid_t pid = fork();
 
         if (pid < 0) {
-            sprintf(src, "[HOST-%zu]", vm_index);
-            LOG(src, "Process not started.", RED_PREFIX);
+            std::snprintf(source, sizeof(source), "[HOST-%zu]", vm_index);
+            LOG(source, "Process not started.", RED_PREFIX);
             return -1;
         }
 
         if (pid == 0) {
-            vm_id = static_cast<int>(vm_index);
-            sprintf(src, "[VM-%d]", vm_id);
-            LOG(src, "Starting process.", GREEN_PREFIX);
-            return child_main(myArgs);
+            const int vm_id = static_cast<int>(vm_index);
+            std::snprintf(source, sizeof(source), "[VM-%d]", vm_id);
+            LOG(source, "Starting process.", GREEN_PREFIX);
+            return child_main(args.vms[vm_index], args.network, vm_id);
         }
 
-        sprintf(src, "VM-%zu started with PID %d", vm_index, pid);
-        LOG("[HOST]", src, GREEN_PREFIX);
+        std::snprintf(source, sizeof(source), "VM-%zu started with PID %d",
+                      vm_index, pid);
+        LOG("[HOST]", source, GREEN_PREFIX);
     }
 
     int final_status = 0;
     int child_status = 0;
-    for (size_t i = 0; i < myArgs.vms.size(); ++i) {
+    for (size_t i = 0; i < args.vms.size(); ++i) {
         const pid_t pid = wait(&child_status);
         const bool success = WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0;
 
-        sprintf(src, "Process %d returned with status: %d", pid,
-                WIFEXITED(child_status) ? WEXITSTATUS(child_status) : -1);
-        LOG("[HOST]", src, success ? GREEN_PREFIX : RED_PREFIX);
+        std::snprintf(source, sizeof(source), "Process %d returned with status: %d",
+                      pid, WIFEXITED(child_status) ? WEXITSTATUS(child_status) : -1);
+        LOG("[HOST]", source, success ? GREEN_PREFIX : RED_PREFIX);
         if (!success) final_status = 1;
     }
 

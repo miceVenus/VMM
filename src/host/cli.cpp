@@ -9,11 +9,11 @@
 #include <vector>
 
 // Error codes
-// (1) invalid args number / missing required config
-// (2) invalid format (bad --vm string, unknown key, missing '=')
-// (3) trying to set the arg twice within one --vm
-// (4) invalid arg value (bad memory size, missing image, not executable, etc.)
-// (5) help requested (not an error, but a special case)
+// 1: missing required configuration
+// 2: invalid format (bad --vm string, unknown key, missing '=')
+// 3: duplicate key within one --vm
+// 4: invalid value (bad memory size, missing image, not executable, etc.)
+// 5: help requested
 
 static bool split_pair(const std::string& s, std::string& k, std::string& v) {
     const auto pos = s.find('=');

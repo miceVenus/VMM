@@ -63,7 +63,6 @@ struct vm {
     size_t mem_size;
     struct kvm_run *run;
     int run_mmap_size;
-    struct kvm_sregs sregs;
     virtio_net* net; /* Non-owning; child_main owns the device object. */
 
 };

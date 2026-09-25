@@ -10,10 +10,6 @@
 #include <cstdio>
 #include <cstring>
 
-
-#include <queue>
-
-
 int vm_init(struct vm &v, size_t mem_size) {
 	v.vcpu_fd = -1;
 	v.run = nullptr;
@@ -22,7 +18,6 @@ int vm_init(struct vm &v, size_t mem_size) {
 	v.run_mmap_size = 0;
 	v.net = nullptr;
 	v.mem_size = mem_size;
-	v.sregs = {};
 
 	v.kvm_fd = open("/dev/kvm", O_RDWR);
 	if (v.kvm_fd < 0) return 0x10;
@@ -113,11 +108,11 @@ static void setup_segments_64(struct kvm_sregs &sregs) {
         .selector = 0x8,
         .type = 11,     // Code: execute, read, accessed
 		.present = 1,
-		.dpl = 0,       // Descriptor Privilage Level: 0 (0, 1, 2, 3)
-		.db = 0,        // Default size - ima vrednost 0 u long modu
-		.s = 1,         // Code/data tip segmenta
-		.l = 1,         // Long mode - 1
-		.g = 1,         // 4KB granularnost
+		.dpl = 0,       // Ring 0
+		.db = 0,        // Required for 64-bit code
+		.s = 1,         // Code/data segment
+		.l = 1,         // 64-bit code segment
+		.g = 1,         // 4 KiB granularity
         .avl = 0,
         .unusable = 0,
         .padding = 0,
@@ -158,17 +153,18 @@ int setup_long_mode(struct vm &v) {
 	pd[mmio_pd_index] = VIRTIO_MMIO_BASE_GPA |
 						PDE64_PRESENT | PDE64_RW | PDE64_USER | PDE64_PS;
 
-	if (ioctl(v.vcpu_fd, KVM_GET_SREGS, &v.sregs) != 0)
+	struct kvm_sregs sregs{};
+	if (ioctl(v.vcpu_fd, KVM_GET_SREGS, &sregs) != 0)
 		return 0x20;
 
-	v.sregs.cr3 = pml4_addr;
-	v.sregs.cr4 = CR4_PAE; // "Physical Address Extension" mora biti 1 za long mode.
-	v.sregs.cr0 = CR0_PE | CR0_PG; // Postavljanje "Protected Mode" i "Paging"
-	v.sregs.efer = EFER_LME | EFER_LMA; // Postavljanje "Long Mode Active" i "Long Mode Enable"
+	sregs.cr3 = pml4_addr;
+	sregs.cr4 = CR4_PAE;
+	sregs.cr0 = CR0_PE | CR0_PG;
+	sregs.efer = EFER_LME | EFER_LMA;
 
-	setup_segments_64(v.sregs);
+	setup_segments_64(sregs);
 
-	if (ioctl(v.vcpu_fd, KVM_SET_SREGS, &v.sregs) != 0)
+	if (ioctl(v.vcpu_fd, KVM_SET_SREGS, &sregs) != 0)
 		return 0x22;
 
     return 0;
@@ -213,7 +209,7 @@ int set_context(struct vm &v) {
     regs.rip = GUEST_START_ADDR; 
 	regs.rflags = 0x2;
 
-	regs.rsp = v.mem_size - STACK_START_OFF; // SP raste nadole
+	regs.rsp = v.mem_size - STACK_START_OFF; // Stack grows down.
 	if (ioctl(v.vcpu_fd, KVM_SET_REGS, &regs) < 0)
 		return 0x40;
 

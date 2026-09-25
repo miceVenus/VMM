@@ -8,8 +8,6 @@
 
 #include <cstdio>
 
-int vm_id;
-
 namespace {
 
 bool guest_interrupts_enabled(const vm& v) {
@@ -20,7 +18,7 @@ bool guest_interrupts_enabled(const vm& v) {
 
 } // namespace
 
-int run_vcpu(struct vm &v) {
+int run_vcpu(struct vm &v, int vm_id) {
     char vm_src[32];
     char guest_output[101];
     size_t output_length = 0;

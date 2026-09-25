@@ -74,7 +74,9 @@ private:
     uint32_t pending_interrupt_status() const;
     uint16_t used_ring_index(const queue_config& queue) const;
     uint64_t read_mmio_value(uint32_t offset, uint32_t length) const;
+    void acknowledge_interrupt(uint32_t value);
     void reset_device();
+    void write_status(uint8_t value);
     void write_register(uint32_t offset, uint64_t value);
     queue_config* selected_queue();
     const queue_config* selected_queue() const;
