@@ -13,6 +13,12 @@
 #define DNS_SERVER_IP ((uint32_t)TEST_DNS_SERVER_IP)
 #define DNS_SERVER_PORT UINT16_C(53)
 #define DNS_CLIENT_PORT UINT16_C(4000)
+#define DNS_HEADER_SIZE 12U
+
+#define DNS_FLAG_QR        UINT16_C(0x8000)
+#define DNS_FLAG_OPCODE    UINT16_C(0x7800)
+#define DNS_FLAG_TRUNCATED UINT16_C(0x0200)
+#define DNS_FLAG_RCODE     UINT16_C(0x000f)
 
 /* RFC 1035 query: ID 0x1234, recursion desired, example.com IN A. */
 static const uint8_t dns_query[] = {
@@ -25,6 +31,34 @@ static const uint8_t dns_query[] = {
 
 static uint16_t read_be16(const uint8_t* bytes) {
     return (uint16_t)(((uint16_t)bytes[0] << 8) | bytes[1]);
+}
+
+static uint8_t lowercase_ascii(uint8_t value) {
+    if (value >= 'A' && value <= 'Z') {
+        return (uint8_t)(value + ('a' - 'A'));
+    }
+    return value;
+}
+
+/* Check that the response repeats this test's example.com IN A question. */
+static int dns_question_matches(const uint8_t* message,
+                                size_t length,
+                                size_t* answer_offset) {
+    const size_t question_length = sizeof(dns_query) - DNS_HEADER_SIZE;
+    if (length < DNS_HEADER_SIZE ||
+        length - DNS_HEADER_SIZE < question_length) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < question_length; ++i) {
+        if (lowercase_ascii(message[DNS_HEADER_SIZE + i]) !=
+            lowercase_ascii(dns_query[DNS_HEADER_SIZE + i])) {
+            return 0;
+        }
+    }
+
+    *answer_offset = DNS_HEADER_SIZE + question_length;
+    return 1;
 }
 
 /* We only need to advance through names, including compressed answer names. */
@@ -50,22 +84,22 @@ static int skip_dns_name(const uint8_t* message,
 static int dns_answer_ipv4(const uint8_t* message,
                            size_t length,
                            uint8_t address[4]) {
-    if (length < 12 || read_be16(message) != UINT16_C(0x1234)) return 0;
+    if (length < DNS_HEADER_SIZE ||
+        read_be16(message) != UINT16_C(0x1234)) {
+        return 0;
+    }
 
     const uint16_t flags = read_be16(message + 2);
-    if ((flags & UINT16_C(0x8000)) == 0 ||
-        (flags & UINT16_C(0x7a0f)) != 0 ||
+    if ((flags & DNS_FLAG_QR) == 0 ||
+        (flags & DNS_FLAG_OPCODE) != 0 ||
+        (flags & DNS_FLAG_TRUNCATED) != 0 ||
+        (flags & DNS_FLAG_RCODE) != 0 ||
         read_be16(message + 4) != 1) {
         return 0;
     }
 
-    size_t offset = 12;
-    if (!skip_dns_name(message, length, &offset) || length - offset < 4 ||
-        read_be16(message + offset) != 1 ||
-        read_be16(message + offset + 2) != 1) {
-        return 0;
-    }
-    offset += 4;
+    size_t offset = 0;
+    if (!dns_question_matches(message, length, &offset)) return 0;
 
     const uint16_t answer_count = read_be16(message + 6);
     for (uint16_t i = 0; i < answer_count; ++i) {
@@ -116,6 +150,7 @@ _start(void) {
         puts("Virtio-net initialization failed\n");
         halt_forever();
     }
+    puts("Virtio-net initialized; resolving TAP gateway ARP\n");
     guest_interrupts_enable();
 
     for (;;) {

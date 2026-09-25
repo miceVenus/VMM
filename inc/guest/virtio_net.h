@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "virtio_defs.h"
 
 #ifdef GUEST_BUILD
 
@@ -16,8 +17,6 @@
 /* Project status: a received Ethernet frame does not fit the caller's buffer. */
 #define VIRTIO_NET_FRAME_TOO_LARGE (-4)
 
-/* Virtio 1.2 net header size when all checksum/segmentation offloads are off. */
-#define VIRTIO_NET_HEADER_SIZE 10U
 /* Project buffer capacity; includes an Ethernet frame but not the Virtio header. */
 #define VIRTIO_NET_FRAME_CAPACITY 1514U
 

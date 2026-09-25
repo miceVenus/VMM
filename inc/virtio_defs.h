@@ -27,6 +27,8 @@
 #define VIRTIO_DEVICE_ID_NET UINT32_C(1)
 /* Virtio-net device supplies a MAC address in its configuration space. */
 #define VIRTIO_NET_F_MAC   UINT32_C(5)
+/* Modern Virtio-net header size when VERSION_1 is negotiated (includes num_buffers). */
+#define VIRTIO_NET_HEADER_SIZE 12U
 
 /* Split Virtqueue descriptor flags. */
 /* Descriptor chains to the descriptor selected by its `next` field. */

@@ -6,6 +6,7 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include "virtio_defs.h"
 
 tap_device::~tap_device() {
     close();
@@ -33,7 +34,7 @@ bool tap_device::open(int vm_id) {
         return false;
     }
 
-    int header_size = 10; /* Virtio-net header size when offloads are disabled. */
+    int header_size = VIRTIO_NET_HEADER_SIZE;
     if (::ioctl(fd_, TUNSETVNETHDRSZ, &header_size) < 0) {
         perror("TUNSETVNETHDRSZ");
         close();

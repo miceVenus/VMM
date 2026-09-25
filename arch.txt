@@ -86,3 +86,62 @@ fragmentation, or multiple pending UDP datagrams.
 The VMM routes vhost RX completion notifications through KVM IRQFD to PIC IRQ 5.
 The Guest remaps the PIC, installs the corresponding IDT gate, and enables
 interrupts after Virtio-net initialization.
+
+
+可以。整个过程大致是“先判断卡在哪一段，再逐层排除，最后找到协议头长度不一致”。
+
+### 1. 先判断 Guest 卡在哪里
+
+最初只看到 `Public DNS query demo started`，这只能说明 Guest 程序启动了，并不代表网卡已经初始化或发出了网络包。
+
+后来增加了阶段日志，看到：
+
+```text
+Virtio-net initialized; resolving TAP gateway ARP
+```
+
+这说明 VirtIO-net 初始化成功，但还没拿到网关 MAC。DNS 测试必须先通过 ARP 找到 `10.200.1.1`，所以此时它还没真正开始 DNS 查询。只有出现 `DNS query ... sent`，才说明 DNS 请求已排入网卡发送队列。
+
+相关等待逻辑在 [network_stack.c](</home/bbm/workspace/System Dev/VMM/src/guest/network_stack.c:27>)，阶段日志在 [dns_guest.c](</home/bbm/workspace/System Dev/VMM/test/testN1/dns_guest.c:153>)。
+
+### 2. 先排查 TAP、路由和 NAT
+
+你贴出的网络配置显示：
+
+- Guest 地址是 `10.200.1.2`
+- TAP 网关地址是 `10.200.1.1/24`
+- NAT 和转发规则已设置，出口是 `ppp1`
+
+因此配置方向看起来是对的，暂时没有必要继续改防火墙规则。
+
+当时我还看到 VMM vCPU 占用接近 100%。这和 Guest 在循环轮询 ARP/RX 队列相符，但本身不能说明具体是哪一层坏了。
+
+### 3. 排查队列通知时，没有把“没看到用户态日志”当成结论
+
+我给用户态 `QUEUE_NOTIFY` 路径加了一个 fallback 和日志。但 VirtIO 队列通知通常会被 `KVM_IOEVENTFD` 直接转给 eventfd，再由 vhost 处理，不一定进入用户态 MMIO 处理。因此，fallback 日志没有出现，**不能证明 Guest 没有 kick 队列**。
+
+与此同时，TAP 接口的计数在增长。这说明数据路径有活动，问题不像是简单的“Guest 完全没有通知后端”。
+
+### 4. 找到关键问题：现代 VirtIO-net 头长度不一致
+
+Guest 协商了 `VIRTIO_F_VERSION_1`，但项目原来把 VirtIO-net header 当成 **10 字节**：
+
+- Guest TX/RX 都按 10 字节放置或跳过 header。
+- Host 创建 TAP 时也通过 `TUNSETVNETHDRSZ` 把 header 长度设成了 10 字节。
+
+而 Linux vhost-net 对现代 `VERSION_1` 模式使用 **12 字节**的 VirtIO-net header。这样 Guest、TAP 与 vhost 对“以太网帧从哪里开始”的理解不一致；尤其是 RX 方向，Guest 可能把 header 的尾部当作以太网帧内容，无法正确识别网关 ARP 回复。Linux vhost-net 的实现会根据 `VIRTIO_F_VERSION_1` 选择扩展 header；规范也描述了现代网络设备的 header 格式。[Linux vhost-net](https://github.com/torvalds/linux/blob/master/drivers/vhost/net.c)、[OASIS VirtIO 规范](https://docs.oasis-open.org/virtio/virtio/v1.0/virtio-v1.0.html)
+
+我把 12 字节定义集中到 [virtio_defs.h](</home/bbm/workspace/System Dev/VMM/inc/virtio_defs.h:31>)，并让 Guest 和 TAP 共用它：[Guest 网卡驱动](</home/bbm/workspace/System Dev/VMM/src/guest/virtio_net.c:281>)、[TAP 初始化](</home/bbm/workspace/System Dev/VMM/src/host/tap_device.cpp:37>)。
+
+### 5. 重建并用更强的结果验证
+
+`make -B all` 通过，网络栈单元测试也通过。重启后，你看到：
+
+```text
+DNS query for example.com sent to resolver
+Public DNS reply: example.com = 104.20.23.154
+```
+
+第二行最关键：测试不只是把数据排入 TX 队列，而是收到了并验证了匹配 `example.com` 查询的 DNS 答复。因此，Guest VirtIO-net、vhost、TAP、Host NAT 和公网 DNS 往返都已跑通。
+
+另外，我曾临时把 ARP 重试间隔调短来辅助观察，发现这会造成过于频繁的 ARP 重发，所以在最终构建前恢复了原来的较低重试频率；这不是最终修复。抓包窗口里的几条 ARP 请求是建链阶段的请求，不能推翻 Guest 后续收到 DNS 回复这一结果。

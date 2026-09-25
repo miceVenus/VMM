@@ -52,6 +52,7 @@ private:
         uint16_t acknowledged_used_index = 0;
         int kick_fd = -1;
         bool ioeventfd_registered = false;
+        bool userspace_kick_fallback_logged = false;
     };
 
     bool configure_vhost();

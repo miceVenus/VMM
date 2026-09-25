@@ -459,6 +459,7 @@ void virtio_net::reset_device() {
         queue.available_ring_address = 0;
         queue.used_ring_address = 0;
         queue.acknowledged_used_index = 0;
+        queue.userspace_kick_fallback_logged = false;
     }
 }
 
@@ -547,9 +548,38 @@ void virtio_net::write_register(uint32_t offset, uint64_t value) {
             }
             break;
         case VIRTIO_MMIO_REG_QUEUE_NOTIFY:
-            /* Queue notifications are normally consumed by KVM_IOEVENTFD. */
-            if (value >= queue_count && (status_ & VIRTIO_STATUS_DRIVER_OK)) {
-                status_ |= VIRTIO_STATUS_FAILED;
+            /* KVM_IOEVENTFD handles the fast path. If a notification reaches
+             * userspace instead, forward it so a missed ioeventfd match does
+             * not silently stall the vhost queue. */
+            if (value >= queue_count) {
+                if (status_ & VIRTIO_STATUS_DRIVER_OK) {
+                    status_ |= VIRTIO_STATUS_FAILED;
+                }
+                break;
+            }
+            if ((status_ & VIRTIO_STATUS_DRIVER_OK) == 0) break;
+
+            {
+                queue_config& queue = queues_[static_cast<size_t>(value)];
+                if (!queue.ready || queue.kick_fd < 0) {
+                    status_ |= VIRTIO_STATUS_FAILED;
+                    break;
+                }
+
+                if (!queue.userspace_kick_fallback_logged) {
+                    std::fprintf(stderr,
+                                 "[VM-%d] QUEUE_NOTIFY reached userspace; "
+                                 "forwarding queue %u kick to vhost.\n",
+                                 vm_id_, static_cast<unsigned>(value));
+                    queue.userspace_kick_fallback_logged = true;
+                }
+
+                const uint64_t kick = 1;
+                if (::write(queue.kick_fd, &kick, sizeof(kick)) !=
+                    static_cast<ssize_t>(sizeof(kick))) {
+                    std::perror("write fallback vhost kick eventfd");
+                    status_ |= VIRTIO_STATUS_FAILED;
+                }
             }
             break;
         case VIRTIO_MMIO_REG_INTERRUPT_ACK:
