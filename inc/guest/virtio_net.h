@@ -25,5 +25,6 @@ int virtio_net_init(uint8_t mac[6]);
 int virtio_net_send_frame(const uint8_t* frame, uint16_t length);
 int virtio_net_receive_frame(uint8_t* frame, size_t capacity);
 void virtio_net_poll(void);
+void virtio_net_wait_for_receive(void);
 
 #endif

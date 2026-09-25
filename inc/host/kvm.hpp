@@ -16,6 +16,8 @@
 #define PDP_OFF  0x2000
 /* Offset of the PD (page-directory table). */
 #define PD_OFF   0x3000
+/* Three descriptors: null, ring-0 64-bit code, and ring-0 data. */
+#define GDT_OFF  0x4000
 
 /* Project-defined Guest physical address where the Guest image is loaded. */
 #define GUEST_START_ADDR    0x0000

@@ -1,5 +1,7 @@
 #include "guest/guest_console.h"
+#include "guest/guest_interrupts.h"
 #include "guest/network_stack.h"
+#include "guest/virtio_net.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -38,13 +40,15 @@ _start(void) {
     const uint16_t echo_server_port = (uint16_t)TEST_UDP_ECHO_PORT;
 
     puts("Freestanding VirtIO-net UDP echo test started\n");
+    guest_interrupts_init();
     if (net_init() != NET_OK) {
         puts("Virtio-net initialization failed\n");
         halt_forever();
     }
     const uint32_t echo_server_ip = (uint32_t)TEST_UDP_ECHO_IP != 0
         ? (uint32_t)TEST_UDP_ECHO_IP : net_gateway_ip();
-    puts("Virtio-net RX/TX and Ethernet/ARP/IPv4/UDP are ready\n");
+    guest_interrupts_enable();
+    puts("Virtio-net IRQ receive and Ethernet/ARP/IPv4/UDP are ready\n");
 
     uint32_t progress = 0;
     for (;;) {
@@ -67,7 +71,6 @@ _start(void) {
     }
     puts("UDP Echo request sent; waiting for the matching response\n");
 
-    progress = 0;
     for (;;) {
         uint32_t source_ip = 0;
         uint16_t source_port = 0;
@@ -82,10 +85,6 @@ _start(void) {
             puts("UDP Echo payload and peer verified successfully\n");
             halt_forever();
         }
-        asm volatile("pause" ::: "memory");
-        if (++progress == UINT32_C(100000000)) {
-            progress = 0;
-            puts("Still waiting for the configured UDP Echo service\n");
-        }
+        virtio_net_wait_for_receive();
     }
 }

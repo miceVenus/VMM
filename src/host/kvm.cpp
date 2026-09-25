@@ -120,6 +120,7 @@ static void setup_segments_64(struct kvm_sregs &sregs) {
 	struct kvm_segment data = code;
 	data.type = 3; // Data: read, write, accessed
 	data.l = 0;
+	data.db = 1;
 	data.selector = 0x10; // Data segment selector
 
 	sregs.cs = code;
@@ -138,6 +139,11 @@ int setup_long_mode(struct vm &v) {
 
 	uint64_t pd_addr = MEM_END - PD_OFF;
 	uint64_t *pd = (uint64_t *)(v.mem_start + pd_addr);
+	uint64_t gdt_addr = MEM_END - GDT_OFF;
+	uint64_t *gdt = (uint64_t *)(v.mem_start + gdt_addr);
+	gdt[0] = 0;
+	gdt[1] = UINT64_C(0x00af9b000000ffff); // 0x08: ring-0 64-bit code
+	gdt[2] = UINT64_C(0x00cf93000000ffff); // 0x10: ring-0 data
 
 	pml4[0] = PDE64_PRESENT | PDE64_RW | PDE64_USER | pdpt_addr;
 	pdpt[0] = PDE64_PRESENT | PDE64_RW | PDE64_USER | pd_addr;
@@ -161,6 +167,8 @@ int setup_long_mode(struct vm &v) {
 	sregs.cr4 = CR4_PAE;
 	sregs.cr0 = CR0_PE | CR0_PG;
 	sregs.efer = EFER_LME | EFER_LMA;
+	sregs.gdt.base = gdt_addr;
+	sregs.gdt.limit = 3 * sizeof(uint64_t) - 1;
 
 	setup_segments_64(sregs);
 

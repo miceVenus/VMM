@@ -146,7 +146,7 @@ static int allocate_queue(struct virtqueue* queue,
                           (size_t)size * sizeof(struct virtq_used_element));
     guest_memory_zero(queue->buffers,
                       (size_t)size * VIRTIO_NET_BUFFER_SIZE);
-    queue->available->flags = VIRTQ_AVAIL_F_NO_INTERRUPT;
+    queue->available->flags = receive_queue ? 0 : VIRTQ_AVAIL_F_NO_INTERRUPT;
 
     for (uint16_t slot = 0; slot < size; ++slot) {
         queue->descriptors[slot].address =
@@ -337,4 +337,19 @@ int virtio_net_receive_frame(uint8_t* frame, size_t capacity) {
 
 void virtio_net_poll(void) {
     if (state.initialized) reclaim_transmit_buffers();
+}
+
+void virtio_net_wait_for_receive(void) {
+    if (!state.initialized) return;
+
+    /* CLI and STI;HLT close the gap between checking the used ring and
+     * sleeping. An IRQ arriving in that gap remains pending and wakes HLT. */
+    asm volatile("cli" ::: "memory");
+    const uint16_t completed =
+        __atomic_load_n(&state.rx.used->index, __ATOMIC_ACQUIRE);
+    if (completed == state.rx.last_used_index) {
+        asm volatile("sti; hlt" ::: "memory");
+    } else {
+        asm volatile("sti" ::: "memory");
+    }
 }
